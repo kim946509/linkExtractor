@@ -128,24 +128,108 @@ class ReadabilityStrategy extends ParsingStrategy {
   }
 
   /**
-   * HTML 콘텐츠를 가져옵니다 (실제로는 Puppeteer 등으로 구현)
+   * Puppeteer를 사용하여 동적 HTML 콘텐츠를 가져옵니다
    * @param {string} url - 대상 URL
    * @param {Object} options - 옵션
    * @returns {Promise<string>} HTML 콘텐츠
    */
-  async fetchHtmlContent(url, options) {
-    // TODO: 실제로는 Puppeteer나 다른 방법으로 구현
-    // 지금은 기본적인 fetch로 구현
-    const axios = require('axios')
+  async fetchHtmlContent(url, options = {}) {
+    let browser = null
 
-    const response = await axios.get(url, {
-      timeout: options.timeout || 30000,
-      headers: {
-        'User-Agent': 'LinkRadio Content Parser 1.0'
+    try {
+      const puppeteer = require('puppeteer')
+
+      // Puppeteer 브라우저 실행
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu'
+        ]
+      })
+
+      const page = await browser.newPage()
+
+      // 타임아웃 설정
+      page.setDefaultTimeout(options.timeout || 30000)
+      page.setDefaultNavigationTimeout(options.timeout || 30000)
+
+      // User-Agent 설정
+      await page.setUserAgent(options.userAgent || 'LinkRadio Content Parser 1.0')
+
+      // 뷰포트 설정
+      await page.setViewport({
+        width: options.width || 1920,
+        height: options.height || 1080,
+        deviceScaleFactor: 1
+      })
+
+      // 불필요한 리소스 차단 (성능 향상)
+      await page.setRequestInterception(true)
+      page.on('request', (request) => {
+        const resourceType = request.resourceType()
+        if (['image', 'stylesheet', 'font', 'media'].includes(resourceType) && !options.loadMedia) {
+          request.abort()
+        } else {
+          request.continue()
+        }
+      })
+
+      // 페이지 로드
+      logger.debug(`Loading page with Puppeteer: ${url}`)
+      await page.goto(url, {
+        waitUntil: options.waitUntil || 'networkidle2',
+        timeout: options.timeout || 30000
+      })
+
+      // JavaScript 실행 대기
+      if (options.waitForSelector) {
+        await page.waitForSelector(options.waitForSelector, { timeout: 5000 }).catch(() => {
+          logger.warn(`Selector ${options.waitForSelector} not found, continuing anyway`)
+        })
       }
-    })
 
-    return response.data
+      // 추가 대기 시간
+      if (options.delay) {
+        await page.waitForTimeout(options.delay)
+      }
+
+      // HTML 콘텐츠 추출
+      const htmlContent = await page.content()
+
+      logger.debug(`Successfully fetched HTML content from: ${url}`)
+      return htmlContent
+
+    } catch (error) {
+      logger.warn(`Puppeteer failed for ${url}, falling back to axios: ${error.message}`)
+
+      // Puppeteer 실패 시 axios로 폴백
+      const axios = require('axios')
+      try {
+        const response = await axios.get(url, {
+          timeout: options.timeout || 30000,
+          headers: {
+            'User-Agent': options.userAgent || 'LinkRadio Content Parser 1.0'
+          }
+        })
+        return response.data
+      } catch (axiosError) {
+        logger.error(`Both Puppeteer and axios failed for ${url}`)
+        throw axiosError
+      }
+    } finally {
+      if (browser) {
+        await browser.close().catch(err => {
+          logger.warn('Error closing Puppeteer browser:', err.message)
+        })
+      }
+    }
   }
 
   /**

@@ -207,7 +207,4 @@ class ParserManager {
   }
 }
 
-// 싱글톤 인스턴스
-const parserManager = new ParserManager()
-
-module.exports = parserManager
+module.exports = ParserManager
