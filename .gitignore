@@ -252,3 +252,4 @@ build/Release
 # CUSTOM
 .mcp.json
 .claude
+test-results/**
